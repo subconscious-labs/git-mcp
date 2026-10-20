@@ -11,9 +11,19 @@ import (
 )
 
 // RegisterTools installs every tool exposed by the server.
+//
+// Read tools are always registered. Write tools are gated behind
+// cfg.WriteAccess, which defaults to true for drop-in parity with the
+// Python reference. When WriteAccess is false, only read tools appear
+// in tools/list.
 func RegisterTools(s *mcp.Server, b backend.GitBackend, cfg *config.Config) {
-	// Read-only tools ----------------------------------------------------
+	registerReadTools(s, b)
+	if cfg.WriteAccess {
+		registerWriteTools(s, b)
+	}
+}
 
+func registerReadTools(s *mcp.Server, b backend.GitBackend) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "git_status",
 		Description: "Shows the working tree status",
@@ -82,7 +92,7 @@ func RegisterTools(s *mcp.Server, b backend.GitBackend, cfg *config.Config) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "git_show",
-		Description: "Shows the contents of a commit, or of a file or directory given as :",
+		Description: "Shows the contents of a commit, or of a file or directory given as <commit>:<path>",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, p GitShowParams) (*mcp.CallToolResult, any, error) {
 		out, err := b.Show(ctx, p.RepoPath, p.Revision)
 		if err != nil {
@@ -108,9 +118,9 @@ func RegisterTools(s *mcp.Server, b backend.GitBackend, cfg *config.Config) {
 		}
 		return text(out), nil, nil
 	})
+}
 
-	// Write tools --------------------------------------------------------
-
+func registerWriteTools(s *mcp.Server, b backend.GitBackend) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "git_add",
 		Description: "Adds file contents to the staging area",
@@ -173,20 +183,17 @@ func RegisterTools(s *mcp.Server, b backend.GitBackend, cfg *config.Config) {
 		return text(out), nil, nil
 	})
 
-	// Extension, gated behind --write-access -----------------------------
-
-	if cfg.WriteAccess {
-		mcp.AddTool(s, &mcp.Tool{
-			Name:        "git_push",
-			Description: "Pushes the current branch to its configured upstream",
-		}, func(ctx context.Context, _ *mcp.CallToolRequest, p GitPushParams) (*mcp.CallToolResult, any, error) {
-			out, err := b.Push(ctx, p.RepoPath, p.Remote, p.Branch)
-			if err != nil {
-				return nil, nil, err
-			}
-			return text(out), nil, nil
-		})
-	}
+	// Extension over the Python reference; still gated behind WriteAccess.
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "git_push",
+		Description: "Pushes the current branch to its configured upstream",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, p GitPushParams) (*mcp.CallToolResult, any, error) {
+		out, err := b.Push(ctx, p.RepoPath, p.Remote, p.Branch)
+		if err != nil {
+			return nil, nil, err
+		}
+		return text(out), nil, nil
+	})
 }
 
 func text(s string) *mcp.CallToolResult {

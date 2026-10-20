@@ -74,12 +74,26 @@ func (b *Backend) Log(ctx context.Context, repoPath string, opts backend.LogOpti
 }
 
 // Show mirrors git show <revision>.
+// Accepts both object form (SHA, tag, HEAD) and path form
+// (<commit>:<path>), matching the reference tool description.
 func (b *Backend) Show(ctx context.Context, repoPath, revision string) (string, error) {
-	sha, err := b.git.ResolveCommit(ctx, repoPath, revision)
+	commit, path, hasPath := strings.Cut(revision, ":")
+	sha, err := b.git.ResolveCommit(ctx, repoPath, commit)
 	if err != nil {
 		return "", err
 	}
-	return b.git.Run(ctx, repoPath, "show", sha)
+	target := sha
+	if hasPath {
+		if path == "" {
+			return "", fmt.Errorf("empty path in revision %q", revision)
+		}
+		// Defense in depth until Phase 3 lands ValidatePositional.
+		if strings.HasPrefix(path, "-") {
+			return "", fmt.Errorf("invalid path %q: must not start with '-'", path)
+		}
+		target = sha + ":" + path
+	}
+	return b.git.Run(ctx, repoPath, "show", target)
 }
 
 // Branch mirrors the reference branch listing. Output is one branch per
@@ -127,14 +141,9 @@ func (b *Backend) Add(ctx context.Context, repoPath string, paths []string) (str
 	return "Files staged successfully", nil
 }
 
-// Commit mirrors git commit -m <message>. The message is passed via
-// stdin (-F -) so it can never be interpreted as a flag, even if it
-// starts with "-".
+// Commit mirrors git commit -m <message>. The message is passed as a
+// single argv value, so it can never be interpreted as a flag by git.
 func (b *Backend) Commit(ctx context.Context, repoPath, message string) (string, error) {
-	// git commit -F - reads the message from stdin.
-	// SafeGit closes stdin by default, so we cannot use Run here.
-	// Instead we pass the message inline with -m, which git treats
-	// as the message value regardless of its content.
 	if _, err := b.git.Run(ctx, repoPath, "commit", "-m", message); err != nil {
 		return "", err
 	}
@@ -146,8 +155,6 @@ func (b *Backend) Commit(ctx context.Context, repoPath, message string) (string,
 }
 
 // Reset mirrors the reference: unstages everything.
-// Paths are accepted for interface symmetry but the reference tool
-// takes none, so paths are ignored here to preserve drop-in parity.
 func (b *Backend) Reset(ctx context.Context, repoPath string, _ []string) (string, error) {
 	if _, err := b.git.Run(ctx, repoPath, "reset"); err != nil {
 		return "", err

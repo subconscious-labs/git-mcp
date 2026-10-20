@@ -1,7 +1,6 @@
 // Package security hosts the middleware that guards every tool invocation.
 // This file provides SafeGit, the only sanctioned way to spawn the system
-// git binary. Phase 3 will extend this package with argument sanitization,
-// path isolation and output redaction.
+// git binary.
 package security
 
 import (
@@ -10,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -23,6 +23,8 @@ const DefaultGitTimeout = 30 * time.Second
 //   - no pager (GIT_PAGER="")
 //   - explicit stdin closure
 //   - hard timeout
+//   - per-invocation safe.directory for the target repo, without touching
+//     the user's global gitconfig
 type SafeGit struct {
 	Binary  string
 	Timeout time.Duration
@@ -37,14 +39,22 @@ func NewSafeGit() (*SafeGit, error) {
 	return &SafeGit{Binary: bin, Timeout: DefaultGitTimeout}, nil
 }
 
-// Run executes `git -C repoPath args...` and returns stdout.
-// stderr is captured and returned in the error, so callers can
+// Run executes `git -c safe.directory=<abs> -C <abs> args...` and returns
+// stdout. stderr is captured and returned in the error, so callers can
 // propagate git's diagnostics to the client.
 func (g *SafeGit) Run(ctx context.Context, repoPath string, args ...string) (string, error) {
+	abs, err := filepath.Abs(repoPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve repo path %q: %w", repoPath, err)
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, g.Timeout)
 	defer cancel()
 
-	full := append([]string{"-C", repoPath}, args...)
+	full := append([]string{
+		"-c", "safe.directory=" + abs,
+		"-C", abs,
+	}, args...)
 	cmd := exec.CommandContext(ctx, g.Binary, full...)
 	cmd.Env = append(os.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
