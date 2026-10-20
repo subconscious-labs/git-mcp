@@ -7,38 +7,64 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 // Backend selects the Git implementation used to execute tool calls.
 type Backend string
 
 const (
-	BackendExec  Backend = "exec"   // shell out to the system git binary
-	BackendGoGit Backend = "go-git" // pure-Go implementation via go-git
+	BackendExec  Backend = "exec"
+	BackendGoGit Backend = "go-git"
 )
 
-// KnownBackends lists every backend value accepted by the server.
 var KnownBackends = []Backend{BackendExec, BackendGoGit}
 
-// Environment variables consulted by Load.
+// Mode controls which tools are exposed to the client.
+type Mode string
+
 const (
-	EnvBackend     = "GIT_MCP_BACKEND"
-	EnvWriteAccess = "GIT_MCP_WRITE_ACCESS"
+	// ModeRead exposes only read-only tools (7 total).
+	ModeRead Mode = "read"
+
+	// ModeLocalWrite additionally exposes git_add, git_commit, git_reset,
+	// git_create_branch, git_checkout (12 total).
+	ModeLocalWrite Mode = "local-write"
+
+	// ModeRemoteWrite additionally exposes git_push (13 total).
+	// This is the drop-in equivalent of the Python reference.
+	ModeRemoteWrite Mode = "remote-write"
 )
 
-// DefaultBackend is used when neither a flag nor an env var is set.
+var KnownModes = []Mode{ModeRead, ModeLocalWrite, ModeRemoteWrite}
+
+const (
+	EnvBackend  = "GIT_MCP_BACKEND"
+	EnvMode     = "GIT_MCP_MODE"
+	EnvAllowDir = "GIT_MCP_ALLOW_DIR"
+)
+
 const DefaultBackend = BackendExec
 
-// DefaultWriteAccess mirrors the Python reference, which always exposes
-// write tools. Set --write-access=false or GIT_MCP_WRITE_ACCESS=false to
-// run in read-only mode (no git_add, git_commit, git_reset,
-// git_create_branch, git_checkout, git_push).
-const DefaultWriteAccess = true
+// DefaultMode is read-only. Set --mode=local-write or --mode=remote-write
+// to expose write tools. This diverges from the Python reference, where
+// write tools are always present, in favor of a safer default.
+const DefaultMode = ModeRead
 
 // Config is the fully resolved server configuration.
 type Config struct {
-	Backend     Backend
-	WriteAccess bool
+	Backend  Backend
+	Mode     Mode
+	AllowDir []string
+}
+
+// repeatedString accumulates repeated string flags.
+type repeatedString []string
+
+func (r *repeatedString) String() string { return strings.Join(*r, ",") }
+func (r *repeatedString) Set(v string) error {
+	*r = append(*r, v)
+	return nil
 }
 
 // Load resolves configuration from the provided CLI arguments and the
@@ -48,24 +74,25 @@ func Load(args []string, stderr io.Writer) (*Config, error) {
 	fs.SetOutput(stderr)
 
 	backendFlag := fs.String(
-		"backend",
-		"",
+		"backend", "",
 		fmt.Sprintf("Git backend: %s (default %q, overrides $%s)",
-			joinBackends(KnownBackends), DefaultBackend, EnvBackend),
+			joinStrings(backendStrings(KnownBackends)), DefaultBackend, EnvBackend),
 	)
-	writeAccessFlag := fs.Bool(
-		"write-access",
-		DefaultWriteAccess,
-		fmt.Sprintf("Enable write tools (default %t, overrides $%s)",
-			DefaultWriteAccess, EnvWriteAccess),
+	modeFlag := fs.String(
+		"mode", "",
+		fmt.Sprintf("Tool exposure: %s (default %q, overrides $%s)",
+			joinStrings(modeStrings(KnownModes)), DefaultMode, EnvMode),
 	)
+	var allowDirs repeatedString
+	fs.Var(&allowDirs, "allow-dir",
+		fmt.Sprintf("Restrict repo_path to this directory (repeatable, overrides $%s)", EnvAllowDir))
 
 	if err := fs.Parse(args); err != nil {
 		return nil, fmt.Errorf("parse flags: %w", err)
 	}
 
 	// Distinguish "flag not passed" from "flag passed as default value",
-	// so that env vars still take effect when the flag is absent.
+	// so env vars still take effect when the flag is absent.
 	flagSet := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { flagSet[f.Name] = true })
 
@@ -73,14 +100,25 @@ func Load(args []string, stderr io.Writer) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	mode, err := resolveMode(*modeFlag, os.Getenv(EnvMode))
+	if err != nil {
+		return nil, err
+	}
 
-	writeAccess := resolveWriteAccess(*writeAccessFlag, flagSet["write-access"], os.Getenv(EnvWriteAccess))
+	allowDir := []string(allowDirs)
+	if len(allowDir) == 0 && !flagSet["allow-dir"] {
+		if env := os.Getenv(EnvAllowDir); env != "" {
+			for _, d := range strings.Split(env, string(os.PathListSeparator)) {
+				if d != "" {
+					allowDir = append(allowDir, d)
+				}
+			}
+		}
+	}
 
-	return &Config{Backend: backend, WriteAccess: writeAccess}, nil
+	return &Config{Backend: backend, Mode: mode, AllowDir: allowDir}, nil
 }
 
-// resolveBackend implements the precedence chain: flag > env > default.
-// Empty strings are treated as "not set".
 func resolveBackend(flagValue, envValue string) (Backend, error) {
 	switch {
 	case flagValue != "":
@@ -92,16 +130,14 @@ func resolveBackend(flagValue, envValue string) (Backend, error) {
 	}
 }
 
-// resolveWriteAccess implements the precedence chain for booleans:
-// explicit flag > env > default. An empty env string means "not set".
-func resolveWriteAccess(flagValue, flagSet bool, envValue string) bool {
+func resolveMode(flagValue, envValue string) (Mode, error) {
 	switch {
-	case flagSet:
-		return flagValue
+	case flagValue != "":
+		return parseMode(flagValue, "flag -mode")
 	case envValue != "":
-		return envValue == "1" || envValue == "true"
+		return parseMode(envValue, "env "+EnvMode)
 	default:
-		return DefaultWriteAccess
+		return DefaultMode, nil
 	}
 }
 
@@ -113,16 +149,36 @@ func parseBackend(v, source string) (Backend, error) {
 		}
 	}
 	return "", fmt.Errorf("unknown backend %q from %s (want one of %s)",
-		v, source, joinBackends(KnownBackends))
+		v, source, joinStrings(backendStrings(KnownBackends)))
 }
 
-func joinBackends(bs []Backend) string {
-	out := ""
-	for i, b := range bs {
-		if i > 0 {
-			out += ", "
+func parseMode(v, source string) (Mode, error) {
+	m := Mode(v)
+	for _, known := range KnownModes {
+		if m == known {
+			return m, nil
 		}
-		out += string(b)
+	}
+	return "", fmt.Errorf("unknown mode %q from %s (want one of %s)",
+		v, source, joinStrings(modeStrings(KnownModes)))
+}
+
+func backendStrings(bs []Backend) []string {
+	out := make([]string, len(bs))
+	for i, b := range bs {
+		out[i] = string(b)
 	}
 	return out
+}
+
+func modeStrings(ms []Mode) []string {
+	out := make([]string, len(ms))
+	for i, m := range ms {
+		out[i] = string(m)
+	}
+	return out
+}
+
+func joinStrings(ss []string) string {
+	return strings.Join(ss, ", ")
 }

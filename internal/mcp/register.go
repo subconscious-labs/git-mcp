@@ -3,23 +3,28 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/subconscious-labs/git-mcp/internal/backend"
 	"github.com/subconscious-labs/git-mcp/internal/config"
+	"github.com/subconscious-labs/git-mcp/internal/security"
 )
 
-// RegisterTools installs every tool exposed by the server.
+// RegisterTools installs tools according to cfg.Mode:
 //
-// Read tools are always registered. Write tools are gated behind
-// cfg.WriteAccess, which defaults to true for drop-in parity with the
-// Python reference. When WriteAccess is false, only read tools appear
-// in tools/list.
+//	read          → 7 read-only tools
+//	local-write   → + git_add, git_commit, git_reset,
+//	                  git_create_branch, git_checkout (12 total)
+//	remote-write  → + git_push (13 total, drop-in equivalent)
 func RegisterTools(s *mcp.Server, b backend.GitBackend, cfg *config.Config) {
 	registerReadTools(s, b)
-	if cfg.WriteAccess {
-		registerWriteTools(s, b)
+	if cfg.Mode == config.ModeLocalWrite || cfg.Mode == config.ModeRemoteWrite {
+		registerLocalWriteTools(s, b)
+	}
+	if cfg.Mode == config.ModeRemoteWrite {
+		registerRemoteWriteTools(s, b)
 	}
 }
 
@@ -120,7 +125,7 @@ func registerReadTools(s *mcp.Server, b backend.GitBackend) {
 	})
 }
 
-func registerWriteTools(s *mcp.Server, b backend.GitBackend) {
+func registerLocalWriteTools(s *mcp.Server, b backend.GitBackend) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "git_add",
 		Description: "Adds file contents to the staging area",
@@ -182,8 +187,9 @@ func registerWriteTools(s *mcp.Server, b backend.GitBackend) {
 		}
 		return text(out), nil, nil
 	})
+}
 
-	// Extension over the Python reference; still gated behind WriteAccess.
+func registerRemoteWriteTools(s *mcp.Server, b backend.GitBackend) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "git_push",
 		Description: "Pushes the current branch to its configured upstream",
@@ -196,10 +202,17 @@ func registerWriteTools(s *mcp.Server, b backend.GitBackend) {
 	})
 }
 
+// text wraps a plain string as a successful MCP tool result and runs it
+// through the output sanitizer. Redaction findings are logged to stderr;
+// the matched data itself is never logged.
 func text(s string) *mcp.CallToolResult {
+	out, findings := security.SanitizeOutput(s)
+	if len(findings) > 0 {
+		log.Printf("sanitized output: %v", findings)
+	}
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
-			&mcp.TextContent{Text: s},
+			&mcp.TextContent{Text: out},
 		},
 	}
 }

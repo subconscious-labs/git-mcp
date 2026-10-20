@@ -1,3 +1,5 @@
+// Command git-mcp is a drop-in compatible MCP server for Git,
+// exposing the same tool contract as the Python reference implementation.
 package main
 
 import (
@@ -19,6 +21,7 @@ import (
 	"github.com/subconscious-labs/git-mcp/internal/security"
 )
 
+// version is injected at build time via -ldflags "-X main.version=...".
 var version = "dev"
 
 func main() {
@@ -38,12 +41,28 @@ func run(args []string, stderr io.Writer) error {
 		return fmt.Errorf("config: %w", err)
 	}
 
-	log.Printf("starting git-mcp version=%s backend=%s write_access=%t",
-		version, cfg.Backend, cfg.WriteAccess)
+	log.Printf("starting git-mcp version=%s backend=%s mode=%s",
+		version, cfg.Backend, cfg.Mode)
 
 	git, err := security.NewSafeGit()
 	if err != nil {
 		return fmt.Errorf("init safe git: %w", err)
+	}
+
+	if len(cfg.AllowDir) > 0 {
+		canon := make([]string, 0, len(cfg.AllowDir))
+		for _, d := range cfg.AllowDir {
+			c, err := security.CanonicalizeAllowDir(d)
+			if err != nil {
+				return fmt.Errorf("allow-dir %q: %w", d, err)
+			}
+			canon = append(canon, c)
+		}
+		git.AllowDir = canon
+		log.Printf("allow-dir: %v", canon)
+	} else {
+		log.Printf("WARNING: no --allow-dir configured; " +
+			"any repo_path readable by this process is permitted")
 	}
 
 	var b backend.GitBackend

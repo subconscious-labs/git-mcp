@@ -18,6 +18,7 @@ import (
 const DefaultGitTimeout = 30 * time.Second
 
 // SafeGit runs git commands under a hardened environment:
+//   - per-invocation path allowlist check
 //   - no shell interpolation (arguments passed as a slice)
 //   - no interactive prompts (GIT_TERMINAL_PROMPT=0)
 //   - no pager (GIT_PAGER="")
@@ -26,8 +27,9 @@ const DefaultGitTimeout = 30 * time.Second
 //   - per-invocation safe.directory for the target repo, without touching
 //     the user's global gitconfig
 type SafeGit struct {
-	Binary  string
-	Timeout time.Duration
+	Binary   string
+	Timeout  time.Duration
+	AllowDir []string // canonical absolute paths; empty means "no allowlist"
 }
 
 // NewSafeGit locates the git binary on PATH and returns a hardened runner.
@@ -43,6 +45,9 @@ func NewSafeGit() (*SafeGit, error) {
 // stdout. stderr is captured and returned in the error, so callers can
 // propagate git's diagnostics to the client.
 func (g *SafeGit) Run(ctx context.Context, repoPath string, args ...string) (string, error) {
+	if err := CheckAllowed(g.AllowDir, repoPath); err != nil {
+		return "", err
+	}
 	abs, err := filepath.Abs(repoPath)
 	if err != nil {
 		return "", fmt.Errorf("resolve repo path %q: %w", repoPath, err)
@@ -83,8 +88,8 @@ func (g *SafeGit) Run(ctx context.Context, repoPath string, args ...string) (str
 // before passing it to a git command that would otherwise interpret
 // it as a flag.
 func (g *SafeGit) ResolveCommit(ctx context.Context, repoPath, rev string) (string, error) {
-	if rev == "" {
-		return "", fmt.Errorf("empty revision")
+	if err := ValidatePositional("revision", rev); err != nil {
+		return "", err
 	}
 	out, err := g.Run(ctx, repoPath,
 		"rev-parse", "--verify", "--end-of-options", rev+"^{commit}")
