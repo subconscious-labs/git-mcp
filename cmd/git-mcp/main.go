@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -29,15 +30,31 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
 	log.SetPrefix("git-mcp: ")
 
-	if err := run(os.Args[1:], os.Stderr); err != nil {
+	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			os.Exit(0)
+		}
 		log.Printf("fatal: %v", err)
 		os.Exit(1)
 	}
 }
 
-func run(args []string, stderr io.Writer) error {
+func run(args []string, stdout, stderr io.Writer) error {
+	// Handle --version before flag parsing so it works with no other args
+	// and does not pollute the protocol stream with anything on stdout
+	// (main's os.Stdout is reserved for MCP once the server starts).
+	for _, a := range args {
+		if a == "--version" || a == "-version" {
+			fmt.Fprintf(stderr, "git-mcp %s\n", version)
+			return nil
+		}
+	}
+
 	cfg, err := config.Load(args, stderr)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return flag.ErrHelp
+		}
 		return fmt.Errorf("config: %w", err)
 	}
 
@@ -70,7 +87,7 @@ func run(args []string, stderr io.Writer) error {
 	case config.BackendExec:
 		b = execbackend.New(git)
 	case config.BackendGoGit:
-		return fmt.Errorf("go-git backend is not implemented yet (Phase 4)")
+		return fmt.Errorf("go-git backend is not implemented yet (v0.4.0)")
 	default:
 		return fmt.Errorf("unsupported backend %q", cfg.Backend)
 	}

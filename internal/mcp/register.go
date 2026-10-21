@@ -16,7 +16,7 @@ import (
 //
 //	read          → 7 read-only tools
 //	local-write   → + git_add, git_commit, git_reset,
-//                     git_create_branch, git_checkout (12 total)
+//	                  git_create_branch, git_checkout (12 total)
 //	remote-write  → + git_fetch, git_pull, git_push (15 total)
 func RegisterTools(s *mcp.Server, b backend.GitBackend, cfg *config.Config) {
 	registerReadTools(s, b)
@@ -244,4 +244,33 @@ func deref(p *int) int {
 		return DefaultContextLines
 	}
 	return *p
+}
+
+// ToolNamesByMode returns the tool names registered for the given mode.
+// It is the single source of truth for what RegisterTools installs; the
+// register functions above must stay in sync with it. Exported for tests.
+func ToolNamesByMode(m config.Mode) []string {
+	read := []string{
+		"git_status",
+		"git_diff_unstaged",
+		"git_diff_staged",
+		"git_diff",
+		"git_log",
+		"git_show",
+		"git_branch",
+	}
+	if m == config.ModeRead {
+		return read
+	}
+	local := append(read,
+		"git_add",
+		"git_commit",
+		"git_reset",
+		"git_create_branch",
+		"git_checkout",
+	)
+	if m == config.ModeLocalWrite {
+		return local
+	}
+	return append(local, "git_fetch", "git_pull", "git_push")
 }

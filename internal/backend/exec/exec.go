@@ -92,7 +92,6 @@ func (b *Backend) Branch(ctx context.Context, repoPath string, opts backend.Bran
 	args := []string{"branch", "--format=%(refname:short)%(if)%(HEAD)%(then) (current)%(end)"}
 	switch opts.Type {
 	case "local", "":
-		// default: local branches only
 	case "remote":
 		args = append(args, "-r")
 	case "all":
@@ -183,7 +182,7 @@ func (b *Backend) Checkout(ctx context.Context, repoPath, branch string) (string
 }
 
 // Fetch updates remote-tracking refs from the given remote. It does not
-// touch local branches, tags, or the working tree. Defaults to "origin".
+// touch local branches, tags, or the working tree.
 func (b *Backend) Fetch(ctx context.Context, repoPath, remote string) (string, error) {
 	if remote == "" {
 		remote = "origin"
@@ -191,8 +190,12 @@ func (b *Backend) Fetch(ctx context.Context, repoPath, remote string) (string, e
 	if err := security.ValidatePositional("remote", remote); err != nil {
 		return "", err
 	}
-	if _, err := b.git.Run(ctx, repoPath, "fetch", remote); err != nil {
+	stdout, stderr, err := b.git.RunWithStderr(ctx, repoPath, "fetch", remote)
+	if err != nil {
 		return "", err
+	}
+	if msg := summarizeStreams(stdout, stderr); msg != "" {
+		return fmt.Sprintf("Fetched from '%s': %s", remote, msg), nil
 	}
 	return fmt.Sprintf("Fetched from '%s'", remote), nil
 }
@@ -200,7 +203,7 @@ func (b *Backend) Fetch(ctx context.Context, repoPath, remote string) (string, e
 // Pull fast-forwards the current branch from the given remote. It uses
 // --ff-only: no merge commits are ever created, no rebase is performed.
 // If the branch cannot be fast-forwarded, git errors and the caller is
-// expected to surface it. Defaults to "origin".
+// expected to surface it.
 func (b *Backend) Pull(ctx context.Context, repoPath, remote, branch string) (string, error) {
 	if remote == "" {
 		remote = "origin"
@@ -215,12 +218,20 @@ func (b *Backend) Pull(ctx context.Context, repoPath, remote, branch string) (st
 		}
 		args = append(args, branch)
 	}
-	return b.git.Run(ctx, repoPath, args...)
+	stdout, stderr, err := b.git.RunWithStderr(ctx, repoPath, args...)
+	if err != nil {
+		return "", err
+	}
+	if msg := summarizeStreams(stdout, stderr); msg != "" {
+		return msg, nil
+	}
+	return "Already up to date.", nil
 }
 
 // Push pushes the given refspec. Both remote and branch are validated as
-// positional arguments before reaching git; this closes the refspec
-// injection hole found in the audit.
+// positional arguments before reaching git. When git reports success but
+// writes "Everything up-to-date" to stderr, that message is returned
+// instead of an empty string.
 func (b *Backend) Push(ctx context.Context, repoPath, remote, branch string) (string, error) {
 	if remote == "" {
 		remote = "origin"
@@ -235,10 +246,36 @@ func (b *Backend) Push(ctx context.Context, repoPath, remote, branch string) (st
 		}
 		args = append(args, branch)
 	}
-	return b.git.Run(ctx, repoPath, args...)
+	stdout, stderr, err := b.git.RunWithStderr(ctx, repoPath, args...)
+	if err != nil {
+		return "", err
+	}
+	if msg := summarizeStreams(stdout, stderr); msg != "" {
+		return msg, nil
+	}
+	return "Everything up-to-date", nil
 }
 
-// unified formats a context_lines value as a git flag.
+// summarizeStreams returns a compact, single-line summary of the combined
+// stdout and stderr of a git command. Used for fetch/pull/push where git
+// may report useful information on either stream.
+func summarizeStreams(stdout, stderr string) string {
+	combined := strings.TrimSpace(stdout) + "\n" + strings.TrimSpace(stderr)
+	combined = strings.TrimSpace(combined)
+	if combined == "\n" {
+		return ""
+	}
+	lines := strings.Split(combined, "\n")
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if l != "" {
+			out = append(out, l)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
 func unified(n int) string {
 	if n <= 0 {
 		n = 3

@@ -41,16 +41,27 @@ func NewSafeGit() (*SafeGit, error) {
 	return &SafeGit{Binary: bin, Timeout: DefaultGitTimeout}, nil
 }
 
-// Run executes `git -c safe.directory=<abs> -C <abs> args...` and returns
-// stdout. stderr is captured and returned in the error, so callers can
-// propagate git's diagnostics to the client.
+// Run executes git and returns stdout. On error, stderr is folded into
+// the returned error. Use RunWithStderr when stderr is also meaningful
+// on success (git push "Everything up-to-date", git fetch progress).
 func (g *SafeGit) Run(ctx context.Context, repoPath string, args ...string) (string, error) {
-	if err := CheckAllowed(g.AllowDir, repoPath); err != nil {
+	stdout, stderr, err := g.RunWithStderr(ctx, repoPath, args...)
+	if err != nil {
 		return "", err
+	}
+	_ = stderr
+	return stdout, nil
+}
+
+// RunWithStderr executes git and returns both streams. On error, the
+// returned error includes stderr so callers can surface git's diagnostics.
+func (g *SafeGit) RunWithStderr(ctx context.Context, repoPath string, args ...string) (string, string, error) {
+	if err := CheckAllowed(g.AllowDir, repoPath); err != nil {
+		return "", "", err
 	}
 	abs, err := filepath.Abs(repoPath)
 	if err != nil {
-		return "", fmt.Errorf("resolve repo path %q: %w", repoPath, err)
+		return "", "", fmt.Errorf("resolve repo path %q: %w", repoPath, err)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, g.Timeout)
@@ -78,9 +89,9 @@ func (g *SafeGit) Run(ctx context.Context, repoPath string, args ...string) (str
 		if msg == "" {
 			msg = err.Error()
 		}
-		return "", fmt.Errorf("git %s: %s", args[0], msg)
+		return stdout.String(), stderr.String(), fmt.Errorf("git %s: %s", args[0], msg)
 	}
-	return stdout.String(), nil
+	return stdout.String(), stderr.String(), nil
 }
 
 // ResolveCommit validates rev and returns its canonical SHA.
