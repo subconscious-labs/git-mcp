@@ -9,11 +9,12 @@ run with `--mode=remote-write`.
 
 ## Status
 
-Phase 3 complete.
+Phase 4a complete (v0.3.0).
 
-- **12 tools** from the Python reference, plus `git_push` as an extension.
+- **12 tools** from the Python reference, plus `git_fetch`, `git_pull`
+  and `git_push` as extensions.
 - **Tool exposure is mode-gated**: `read` (7), `local-write` (12),
-  `remote-write` (13). Default is `read`.
+  `remote-write` (15). Default is `read`.
 - **Path allowlist** via `--allow-dir` (repeatable).
 - **Flag-injection protection** on every positional argument.
 - **Output sanitization**: secrets (AWS, GitHub tokens, JWTs, PEM keys,
@@ -22,8 +23,11 @@ Phase 3 complete.
 - **`safe.directory`** is scoped per invocation; the user's global
   gitconfig is never modified.
 
-The `go-git` backend is planned for Phase 4. `git_fetch` and `git_pull`
-are also planned for Phase 4 as extensions over the reference contract.
+`git_pull` uses `--ff-only`: it never creates merge commits and never
+rebases. `git_fetch` updates remote-tracking refs only, never local
+branches or the working tree. Both are gated behind `--mode=remote-write`.
+
+The `go-git` backend is planned for v0.4.0.
 
 ## Build
 
@@ -57,11 +61,11 @@ Same precedence for `--backend` / `GIT_MCP_BACKEND` and
 
 ### Modes
 
-| Mode | Tools exposed | Write endpoints reachable |
+| Mode | Tools | Write endpoints reachable |
 |---|---|---|
 | `read` | 7 | none |
 | `local-write` | 12 | add, commit, reset, create_branch, checkout |
-| `remote-write` | 13 | + push |
+| `remote-write` | 15 | + fetch, pull (ff-only), push |
 
 ## Security
 
@@ -74,14 +78,16 @@ Same precedence for `--backend` / `GIT_MCP_BACKEND` and
   reaching git.
 - **Output sanitization**: known secret patterns are redacted;
   prompt-injection markers are wrapped.
+- **`git_pull` is `--ff-only`**: the server will never create merge
+  commits or rebase on the client's behalf.
 
 ## Development
 
 ```sh
-make lint           # golangci-lint
-make test           # unit tests
-make security-test  # CVE / traversal / redaction regressions
-make ci             # full gate before merge
+make lint
+make test
+make security-test
+make ci
 ```
 
 ## License

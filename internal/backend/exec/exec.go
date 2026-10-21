@@ -182,9 +182,45 @@ func (b *Backend) Checkout(ctx context.Context, repoPath, branch string) (string
 	return fmt.Sprintf("Switched to branch '%s'", branch), nil
 }
 
+// Fetch updates remote-tracking refs from the given remote. It does not
+// touch local branches, tags, or the working tree. Defaults to "origin".
+func (b *Backend) Fetch(ctx context.Context, repoPath, remote string) (string, error) {
+	if remote == "" {
+		remote = "origin"
+	}
+	if err := security.ValidatePositional("remote", remote); err != nil {
+		return "", err
+	}
+	if _, err := b.git.Run(ctx, repoPath, "fetch", remote); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Fetched from '%s'", remote), nil
+}
+
+// Pull fast-forwards the current branch from the given remote. It uses
+// --ff-only: no merge commits are ever created, no rebase is performed.
+// If the branch cannot be fast-forwarded, git errors and the caller is
+// expected to surface it. Defaults to "origin".
+func (b *Backend) Pull(ctx context.Context, repoPath, remote, branch string) (string, error) {
+	if remote == "" {
+		remote = "origin"
+	}
+	if err := security.ValidatePositional("remote", remote); err != nil {
+		return "", err
+	}
+	args := []string{"pull", "--ff-only", remote}
+	if branch != "" {
+		if err := security.ValidatePositional("branch", branch); err != nil {
+			return "", err
+		}
+		args = append(args, branch)
+	}
+	return b.git.Run(ctx, repoPath, args...)
+}
+
 // Push pushes the given refspec. Both remote and branch are validated as
-// positional arguments before reaching git; this is the fix for the
-// refspec-injection hole identified in the audit report.
+// positional arguments before reaching git; this closes the refspec
+// injection hole found in the audit.
 func (b *Backend) Push(ctx context.Context, repoPath, remote, branch string) (string, error) {
 	if remote == "" {
 		remote = "origin"
@@ -203,7 +239,6 @@ func (b *Backend) Push(ctx context.Context, repoPath, remote, branch string) (st
 }
 
 // unified formats a context_lines value as a git flag.
-// The reference default is 3.
 func unified(n int) string {
 	if n <= 0 {
 		n = 3

@@ -2,6 +2,9 @@
 // Every struct in this file maps one-to-one to a tool of the Python
 // reference mcp-server-git implementation, including required fields,
 // optional fields and their defaults.
+//
+// GitFetchParams, GitPullParams and GitPushParams are extensions over the
+// reference; they are only registered in --mode=remote-write.
 package mcp
 
 // GitStatusParams mirrors the reference GitStatus model.
@@ -34,13 +37,13 @@ type GitCommitParams struct {
 	Message  string `json:"message" jsonschema:"Commit message.,required"`
 }
 
-// GitAddParams mirrors GitAdd. The Python schema enforces min_length=1.
+// GitAddParams mirrors GitAdd.
 type GitAddParams struct {
 	RepoPath string   `json:"repo_path" jsonschema:"Path to the Git repository.,required"`
 	Files    []string `json:"files" jsonschema:"Files to stage.,required,minItems=1"`
 }
 
-// GitResetParams mirrors GitReset. The reference tool takes no paths.
+// GitResetParams mirrors GitReset.
 type GitResetParams struct {
 	RepoPath string `json:"repo_path" jsonschema:"Path to the Git repository.,required"`
 }
@@ -49,8 +52,8 @@ type GitResetParams struct {
 type GitLogParams struct {
 	RepoPath       string  `json:"repo_path" jsonschema:"Path to the Git repository.,required"`
 	MaxCount       *int    `json:"max_count,omitempty" jsonschema:"Maximum number of commits to return. Defaults to 10."`
-	StartTimestamp *string `json:"start_timestamp,omitempty" jsonschema:"Start timestamp for filtering commits. Accepts ISO 8601, relative dates, or absolute dates."`
-	EndTimestamp   *string `json:"end_timestamp,omitempty" jsonschema:"End timestamp for filtering commits. Accepts ISO 8601, relative dates, or absolute dates."`
+	StartTimestamp *string `json:"start_timestamp,omitempty" jsonschema:"Start timestamp for filtering commits."`
+	EndTimestamp   *string `json:"end_timestamp,omitempty" jsonschema:"End timestamp for filtering commits."`
 }
 
 // GitCreateBranchParams mirrors GitCreateBranch.
@@ -69,24 +72,38 @@ type GitCheckoutParams struct {
 // GitShowParams mirrors GitShow.
 type GitShowParams struct {
 	RepoPath string `json:"repo_path" jsonschema:"Path to the Git repository.,required"`
-	Revision string `json:"revision" jsonschema:"Commit, tag, or object to show.,required"`
+	Revision string `json:"revision" jsonschema:"Commit, tag, object, or <commit>:<path> to show.,required"`
 }
 
-// GitBranchParams mirrors GitBranch. BranchType is constrained by the
-// reference implementation to local, remote, or all.
+// GitBranchParams mirrors GitBranch.
 type GitBranchParams struct {
 	RepoPath    string  `json:"repo_path" jsonschema:"Path to the Git repository.,required"`
-	BranchType  string  `json:"branch_type" jsonschema:"Whether to list local branches ('local'), remote branches ('remote'), or all branches ('all').,required,enum=local,enum=remote,enum=all"`
+	BranchType  string  `json:"branch_type" jsonschema:"One of: local, remote, all.,required,enum=local,enum=remote,enum=all"`
 	Contains    *string `json:"contains,omitempty" jsonschema:"Only list branches containing this commit SHA."`
 	NotContains *string `json:"not_contains,omitempty" jsonschema:"Only list branches not containing this commit SHA."`
 }
 
-// GitPushParams is an extension over the Python reference. It is only
-// registered when the server runs with --write-access.
+// GitFetchParams is the extension tool git_fetch. Not in the Python
+// reference; only registered in --mode=remote-write.
+type GitFetchParams struct {
+	RepoPath string `json:"repo_path" jsonschema:"Path to the Git repository.,required"`
+	Remote   string `json:"remote,omitempty" jsonschema:"Remote name. Defaults to origin."`
+}
+
+// GitPullParams is the extension tool git_pull. Not in the Python
+// reference; only registered in --mode=remote-write.
+type GitPullParams struct {
+	RepoPath string `json:"repo_path" jsonschema:"Path to the Git repository.,required"`
+	Remote   string `json:"remote,omitempty" jsonschema:"Remote name. Defaults to origin."`
+	Branch   string `json:"branch,omitempty" jsonschema:"Branch to pull. Defaults to the remote-tracking branch of the current HEAD."`
+}
+
+// GitPushParams is the extension tool git_push. Not in the Python
+// reference; only registered in --mode=remote-write.
 type GitPushParams struct {
 	RepoPath string `json:"repo_path" jsonschema:"Path to the Git repository.,required"`
 	Remote   string `json:"remote" jsonschema:"Remote name to push to. Defaults to origin."`
-	Branch   string `json:"branch" jsonschema:"Branch to push. Defaults to the current branch."`
+	Branch   string `json:"branch" jsonschema:"Branch or refspec to push. Defaults to the current branch."`
 }
 
 // DefaultContextLines matches DEFAULT_CONTEXT_LINES in the reference.

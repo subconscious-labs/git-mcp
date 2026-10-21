@@ -2,12 +2,14 @@
 // supported Git backend (exec, go-git). The interface mirrors the tool
 // surface of the Python reference mcp-server-git one-to-one, so that a
 // client written for the reference implementation works unchanged.
+//
+// Fetch and Pull are extensions over the Python reference and are only
+// exposed when the server runs with --mode=remote-write.
 package backend
 
 import "context"
 
 // LogOptions mirrors the optional arguments of git_log.
-// An empty StartTimestamp or EndTimestamp means "not set".
 type LogOptions struct {
 	MaxCount       int
 	StartTimestamp string
@@ -15,8 +17,6 @@ type LogOptions struct {
 }
 
 // BranchOptions mirrors the arguments of git_branch.
-// Type is one of "local", "remote", "all".
-// Empty Contains / NotContains mean "not set".
 type BranchOptions struct {
 	Type        string
 	Contains    string
@@ -36,12 +36,17 @@ type GitBackend interface {
 	Show(ctx context.Context, repoPath, revision string) (string, error)
 	Branch(ctx context.Context, repoPath string, opts BranchOptions) (string, error)
 
-	// Write operations -------------------------------------------------
+	// Local write operations -------------------------------------------
 
 	Add(ctx context.Context, repoPath string, paths []string) (string, error)
 	Commit(ctx context.Context, repoPath, message string) (string, error)
 	Reset(ctx context.Context, repoPath string, paths []string) (string, error)
-	CreateBranch(ctx context.Context, repoPath, name string, baseBranch string) (string, error)
+	CreateBranch(ctx context.Context, repoPath, name, baseBranch string) (string, error)
 	Checkout(ctx context.Context, repoPath, branch string) (string, error)
+
+	// Remote operations (extension over the Python reference) ----------
+
+	Fetch(ctx context.Context, repoPath, remote string) (string, error)
+	Pull(ctx context.Context, repoPath, remote, branch string) (string, error)
 	Push(ctx context.Context, repoPath, remote, branch string) (string, error)
 }

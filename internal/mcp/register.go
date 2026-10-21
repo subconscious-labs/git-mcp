@@ -16,8 +16,8 @@ import (
 //
 //	read          → 7 read-only tools
 //	local-write   → + git_add, git_commit, git_reset,
-//	                  git_create_branch, git_checkout (12 total)
-//	remote-write  → + git_push (13 total, drop-in equivalent)
+//                     git_create_branch, git_checkout (12 total)
+//	remote-write  → + git_fetch, git_pull, git_push (15 total)
 func RegisterTools(s *mcp.Server, b backend.GitBackend, cfg *config.Config) {
 	registerReadTools(s, b)
 	if cfg.Mode == config.ModeLocalWrite || cfg.Mode == config.ModeRemoteWrite {
@@ -190,6 +190,28 @@ func registerLocalWriteTools(s *mcp.Server, b backend.GitBackend) {
 }
 
 func registerRemoteWriteTools(s *mcp.Server, b backend.GitBackend) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "git_fetch",
+		Description: "Fetches remote refs without touching local branches (extension)",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, p GitFetchParams) (*mcp.CallToolResult, any, error) {
+		out, err := b.Fetch(ctx, p.RepoPath, p.Remote)
+		if err != nil {
+			return nil, nil, err
+		}
+		return text(out), nil, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "git_pull",
+		Description: "Fast-forwards the current branch from its remote (extension, --ff-only)",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, p GitPullParams) (*mcp.CallToolResult, any, error) {
+		out, err := b.Pull(ctx, p.RepoPath, p.Remote, p.Branch)
+		if err != nil {
+			return nil, nil, err
+		}
+		return text(out), nil, nil
+	})
+
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "git_push",
 		Description: "Pushes the current branch to its configured upstream",
